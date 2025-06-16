@@ -3,3 +3,7 @@
 *.pub
 *.crt
 *.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfstate.backup

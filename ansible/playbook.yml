@@ -7,15 +7,22 @@
     hello_file: "/home/ubuntu/hello.txt"
 
   tasks:
+    - name: Wait for system to be ready
+      wait_for_connection:
+        timeout: 300
+
     - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Install Nginx
+    - name: Install required packages
       apt:
-        name: nginx
+        name:
+          - nginx
+          - curl
         state: present
+        update_cache: yes
 
     - name: Create hello.txt
       copy:
@@ -24,6 +31,45 @@
         owner: ubuntu
         group: ubuntu
         mode: '0644'
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Create custom nginx configuration
+      copy:
+        dest: /etc/nginx/sites-available/webapp
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+          
+              root /var/www/html;
+              index index.html index.htm;
+          
+              server_name _;
+          
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          
+              # Health check endpoint
+              location /health {
+                  access_log off;
+                  return 200 "healthy\n";
+                  add_header Content-Type text/plain;
+              }
+          }
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable custom site
+      file:
+        src: /etc/nginx/sites-available/webapp
+        dest: /etc/nginx/sites-enabled/webapp
+        state: link
 
     - name: Create custom HTML page
       copy:
@@ -39,15 +85,20 @@
                   .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
                   h1 { color: #333; }
                   .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
+                  .status { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin: 10px 0; }
               </style>
           </head>
           <body>
               <div class="container">
                   <h1>🚀 Веб-сервер успішно розгорнуто!</h1>
+                  <div class="status">
+                      ✅ Статус: Працює нормально
+                  </div>
                   <div class="info">
                       <p><strong>Повідомлення:</strong> {{ hello_content }}</p>
                       <p><strong>Дата розгортання:</strong> {{ ansible_date_time.iso8601 }}</p>
                       <p><strong>Хост:</strong> {{ inventory_hostname }}</p>
+                      <p><strong>ОС:</strong> {{ ansible_distribution }} {{ ansible_distribution_version }}</p>
                   </div>
                   <p>Цей сервер було автоматично налаштовано за допомогою:</p>
                   <ul>
@@ -55,6 +106,12 @@
                       <li>Terraform (інфраструктура)</li>
                       <li>Ansible (конфігурація)</li>
                   </ul>
+                  <div class="info">
+                      <p><strong>Endpoints:</strong></p>
+                      <ul>
+                          <li><a href="/health">Health Check</a></li>
+                      </ul>
+                  </div>
               </div>
           </body>
           </html>
@@ -62,11 +119,26 @@
         group: www-data
         mode: '0644'
 
+    - name: Test nginx configuration
+      command: nginx -t
+      register: nginx_test
+
+    - name: Display nginx test result
+      debug:
+        msg: "Nginx configuration test: {{ nginx_test.stdout }}"
+
     - name: Enable and start Nginx
       systemd:
         name: nginx
         enabled: yes
-        state: started
+        state: restarted
+        daemon_reload: yes
+
+    - name: Wait for Nginx to start
+      wait_for:
+        port: 80
+        host: 0.0.0.0
+        timeout: 30
 
     - name: Check Nginx status
       command: systemctl is-active nginx
@@ -75,3 +147,25 @@
     - name: Display Nginx status
       debug:
         msg: "Nginx статус: {{ nginx_status.stdout }}"
+
+    - name: Test local web server
+      uri:
+        url: http://localhost/
+        method: GET
+        status_code: 200
+      register: local_test
+
+    - name: Display local test result
+      debug:
+        msg: "Local web test successful: {{ local_test.status }}"
+
+    - name: Test health endpoint
+      uri:
+        url: http://localhost/health
+        method: GET
+        status_code: 200
+      register: health_test
+
+    - name: Display health test result
+      debug:
+        msg: "Health endpoint test: {{ health_test.content }}"
