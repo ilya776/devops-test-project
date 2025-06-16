@@ -1,6 +1,5 @@
+*.pem
+*.key
 *.pub
-!/devops-rsa-key.pub
-!/my-ec2-key.pub
-!/my-ec2-key
-*.pem!
-/my-ec2-key
+*.crt
+*.tfvars

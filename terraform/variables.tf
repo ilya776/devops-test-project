@@ -12,3 +12,8 @@ variable "key_name" {
   description = "SSH key pair name"
   type        = string
 }
+
+variable "ssh_public_key" {
+  description = "SSH public key string"
+  type        = string
+}

@@ -7,7 +7,6 @@ on:
 
 jobs:
   deploy:
-    name: Terraform + Ansible Deployment
     runs-on: ubuntu-latest
 
     env:
@@ -16,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3.1.2
@@ -31,18 +30,34 @@ jobs:
         working-directory: terraform
         run: terraform apply -auto-approve
 
-      - name: Install Ansible
-        run: sudo apt-get update && sudo apt-get install -y ansible
-
-      - name: Add EC2 host to inventory
-        run: |
-          echo "[webserver]" > ansible/inventory.ini
-          echo "$(terraform -chdir=terraform output -raw public_ip) ansible_user=ubuntu ansible_ssh_private_key_file=ansible/ec2_key.pem" >> ansible/inventory.ini
-
       - name: Save SSH private key
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/ec2_key.pem
           chmod 600 ansible/ec2_key.pem
+
+      - name: Get EC2 public IP from Terraform output
+        id: ec2_ip
+        working-directory: terraform
+        run: echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+
+      - name: Add EC2 host to inventory
+        run: |
+          echo "[webserver]" > ansible/inventory.ini
+          echo "${{ steps.ec2_ip.outputs.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=ansible/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory.ini
+
+      - name: Install Ansible
+        run: sudo apt-get update && sudo apt-get install -y ansible
+
+      - name: Wait for EC2 to be ready
+        run: |
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -i ansible/ec2_key.pem ubuntu@${{ steps.ec2_ip.outputs.public_ip }} echo "ready"; then
+              echo "EC2 instance is ready"
+              break
+            fi
+            echo "Waiting for EC2 instance... attempt $i"
+            sleep 10
+          done
 
       - name: Run Ansible Playbook
         run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml

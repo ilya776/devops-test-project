@@ -1,33 +1,77 @@
 ---
 - name: Configure web server
-  hosts: web
+  hosts: webserver
   become: yes
   vars:
+    hello_content: "Привіт! Це веб-сервер розгорнутий через GitHub Actions, Terraform та Ansible!"
     hello_file: "/home/ubuntu/hello.txt"
+
   tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
     - name: Install Nginx
       apt:
         name: nginx
         state: present
-        update_cache: yes
 
     - name: Create hello.txt
       copy:
-        content: "{{ lookup('file', 'hello.txt') }}"
+        content: "{{ hello_content }}"
         dest: "{{ hello_file }}"
         owner: ubuntu
         group: ubuntu
         mode: '0644'
 
-    - name: Update Nginx default page to serve hello.txt
+    - name: Create custom HTML page
       copy:
-        dest: /var/www/html/index.nginx-debian.html
-        content: "{{ lookup('file', 'hello.txt') }}"
+        dest: /var/www/html/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Мій веб-сервер</title>
+              <meta charset="UTF-8">
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f4; }
+                  .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  h1 { color: #333; }
+                  .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🚀 Веб-сервер успішно розгорнуто!</h1>
+                  <div class="info">
+                      <p><strong>Повідомлення:</strong> {{ hello_content }}</p>
+                      <p><strong>Дата розгортання:</strong> {{ ansible_date_time.iso8601 }}</p>
+                      <p><strong>Хост:</strong> {{ inventory_hostname }}</p>
+                  </div>
+                  <p>Цей сервер було автоматично налаштовано за допомогою:</p>
+                  <ul>
+                      <li>GitHub Actions (CI/CD)</li>
+                      <li>Terraform (інфраструктура)</li>
+                      <li>Ansible (конфігурація)</li>
+                  </ul>
+              </div>
+          </body>
+          </html>
         owner: www-data
         group: www-data
         mode: '0644'
 
-    - name: Restart Nginx
-      service:
+    - name: Enable and start Nginx
+      systemd:
         name: nginx
-        state: restarted
+        enabled: yes
+        state: started
+
+    - name: Check Nginx status
+      command: systemctl is-active nginx
+      register: nginx_status
+
+    - name: Display Nginx status
+      debug:
+        msg: "Nginx статус: {{ nginx_status.stdout }}"
