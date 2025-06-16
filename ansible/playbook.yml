@@ -1,20 +1,33 @@
 ---
-- hosts: web
-  become: true
+- name: Configure web server
+  hosts: web
+  become: yes
+  vars:
+    hello_file: "/home/ubuntu/hello.txt"
   tasks:
-    - name: Install nginx
+    - name: Install Nginx
       apt:
         name: nginx
         state: present
         update_cache: yes
 
-    - name: Copy hello.txt to server
+    - name: Create hello.txt
       copy:
-        src: ../hello.txt
-        dest: /var/www/html/index.html
+        content: "{{ lookup('file', 'hello.txt') }}"
+        dest: "{{ hello_file }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
 
-    - name: Start nginx
+    - name: Update Nginx default page to serve hello.txt
+      copy:
+        dest: /var/www/html/index.nginx-debian.html
+        content: "{{ lookup('file', 'hello.txt') }}"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Restart Nginx
       service:
         name: nginx
-        state: started
-        enabled: yes
+        state: restarted
