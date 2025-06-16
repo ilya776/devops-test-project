@@ -164,8 +164,9 @@
         url: http://localhost/health
         method: GET
         status_code: 200
+        return_content: yes
       register: health_test
 
     - name: Display health test result
       debug:
-        msg: "Health endpoint test: {{ health_test.content }}"
+        msg: "Health endpoint test: Status {{ health_test.status }} - Content: {{ health_test.content | default('No content returned') }}"
