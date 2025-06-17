@@ -1,0 +1,148 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm infrastructure destruction'
+        required: true
+        type: string
+      bucket_name:
+        description: 'S3 bucket name for Terraform state (optional - will try to find automatically)'
+        required: false
+        type: string
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup AWS CLI
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Find S3 bucket with Terraform state
+        id: find_bucket
+        run: |
+          if [ -n "${{ github.event.inputs.bucket_name }}" ]; then
+            BUCKET_NAME="${{ github.event.inputs.bucket_name }}"
+            echo "Using provided bucket name: $BUCKET_NAME"
+          else
+            echo "Searching for Terraform state bucket..."
+            # Шукаємо bucket з префіксом terraform-state
+            BUCKET_NAME=$(aws s3api list-buckets --query 'Buckets[?contains(Name, `terraform-state`) && contains(Name, `${{ github.repository_owner }}`)].Name' --output text | head -n1)
+            if [ -z "$BUCKET_NAME" ]; then
+              echo "❌ No Terraform state bucket found automatically"
+              echo "Please provide bucket name manually or check if bucket exists"
+              exit 1
+            fi
+            echo "Found bucket: $BUCKET_NAME"
+          fi
+          
+          # Перевіряємо чи існує bucket
+          if ! aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
+            echo "❌ Bucket $BUCKET_NAME does not exist"
+            exit 1
+          fi
+          
+          echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.6.6
+
+      - name: Create backend configuration
+        working-directory: terraform
+        run: |
+          cat > backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket         = "${{ steps.find_bucket.outputs.bucket-name }}"
+              key            = "terraform/terraform.tfstate"
+              region         = "us-east-1"
+              dynamodb_table = "terraform-state-lock"
+              encrypt        = true
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Show resources to be destroyed
+        working-directory: terraform
+        run: |
+          echo "🔍 Resources that will be destroyed:"
+          terraform plan -destroy -var="key_name=devops-key" -var="ssh_public_key=dummy" -var="aws_region=us-east-1" -var="instance_type=t2.micro"
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: |
+          echo "🚨 Starting infrastructure destruction..."
+          terraform destroy -auto-approve \
+            -var="key_name=devops-key" \
+            -var="ssh_public_key=dummy" \
+            -var="aws_region=us-east-1" \
+            -var="instance_type=t2.micro"
+
+      - name: Clean up S3 bucket and DynamoDB table
+        run: |
+          echo "🧹 Cleaning up Terraform backend resources..."
+          
+          # Видаляємо всі версії об'єктів з S3 bucket
+          BUCKET_NAME="${{ steps.find_bucket.outputs.bucket-name }}"
+          
+          echo "Removing all objects from bucket: $BUCKET_NAME"
+          aws s3api list-object-versions --bucket $BUCKET_NAME --query 'Versions[].{Key:Key,VersionId:VersionId}' --output text | while read key version; do
+            if [ -n "$key" ] && [ -n "$version" ]; then
+              aws s3api delete-object --bucket $BUCKET_NAME --key "$key" --version-id "$version"
+            fi
+          done
+          
+          # Видаляємо delete markers
+          aws s3api list-object-versions --bucket $BUCKET_NAME --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output text | while read key version; do
+            if [ -n "$key" ] && [ -n "$version" ]; then
+              aws s3api delete-object --bucket $BUCKET_NAME --key "$key" --version-id "$version"
+            fi
+          done
+          
+          # Видаляємо bucket
+          aws s3api delete-bucket --bucket $BUCKET_NAME
+          echo "✅ S3 bucket $BUCKET_NAME deleted"
+          
+          # Видаляємо DynamoDB таблицю
+          TABLE_NAME="terraform-state-lock"
+          if aws dynamodb describe-table --table-name $TABLE_NAME 2>/dev/null; then
+            aws dynamodb delete-table --table-name $TABLE_NAME
+            echo "✅ DynamoDB table $TABLE_NAME deleted"
+          else
+            echo "ℹ️ DynamoDB table $TABLE_NAME not found"
+          fi
+
+      - name: Destruction completed
+        run: |
+          echo "✅ Infrastructure destruction completed successfully!"
+          echo "🗑️ All AWS resources have been removed"
+          echo "💾 Terraform state backend cleaned up"
+          echo ""
+          echo "Summary of destroyed resources:"
+          echo "- EC2 instance"
+          echo "- Application Load Balancer"
+          echo "- VPC and networking components"
+          echo "- Security groups"
+          echo "- S3 bucket (Terraform state)"
+          echo "- DynamoDB table (state locking)"
