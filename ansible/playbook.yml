@@ -3,7 +3,6 @@
   hosts: webserver
   become: yes
   vars:
-    hello_content: "Привіт! Це веб-сервер розгорнутий через GitHub Actions, Terraform та Ansible!"
     hello_file: "/home/ubuntu/hello.txt"
 
   tasks:
@@ -24,13 +23,22 @@
         state: present
         update_cache: yes
 
-    - name: Create hello.txt
+    - name: Copy hello.txt from repository
       copy:
-        content: "{{ hello_content }}"
+        src: hello.txt
         dest: "{{ hello_file }}"
         owner: ubuntu
         group: ubuntu
         mode: '0644'
+
+    - name: Read hello.txt content
+      slurp:
+        src: "{{ hello_file }}"
+      register: hello_content_raw
+
+    - name: Set hello content variable
+      set_fact:
+        hello_content: "{{ hello_content_raw.content | b64decode | trim }}"
 
     - name: Remove default nginx site
       file:
@@ -44,17 +52,16 @@
           server {
               listen 80 default_server;
               listen [::]:80 default_server;
-          
+
               root /var/www/html;
               index index.html index.htm;
-          
+
               server_name _;
-          
+
               location / {
                   try_files $uri $uri/ =404;
               }
-          
-              # Health check endpoint
+
               location /health {
                   access_log off;
                   return 200 "healthy\n";
@@ -78,39 +85,73 @@
           <!DOCTYPE html>
           <html>
           <head>
-              <title>Мій веб-сервер</title>
+              <title>Hello World Page</title>
               <meta charset="UTF-8">
               <style>
-                  body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f4; }
-                  .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                  h1 { color: #333; }
-                  .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
-                  .status { background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin: 10px 0; }
+                  body { 
+                      font-family: Arial, sans-serif; 
+                      margin: 40px; 
+                      background-color: #f4f4f4; 
+                  }
+                  .container { 
+                      background: white; 
+                      padding: 30px; 
+                      border-radius: 8px; 
+                      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                      max-width: 800px;
+                      margin: 0 auto;
+                  }
+                  .hello-content {
+                      background: #e7f3ff;
+                      padding: 20px;
+                      border-radius: 4px;
+                      font-size: 18px;
+                      border-left: 4px solid #007bff;
+                      margin: 20px 0;
+                  }
+                  .status { 
+                      background: #d4edda; 
+                      color: #155724; 
+                      padding: 10px; 
+                      border-radius: 4px; 
+                      margin: 10px 0; 
+                  }
+                  .tech-info {
+                      background: #f8f9fa;
+                      padding: 15px;
+                      border-radius: 4px;
+                      margin: 20px 0;
+                      border: 1px solid #dee2e6;
+                  }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>🚀 Веб-сервер успішно розгорнуто!</h1>
+                  <h1>🚀 Automated Web Deployment</h1>
                   <div class="status">
-                      ✅ Статус: Працює нормально
+                      ✅ Status: Successfully deployed via CI/CD
                   </div>
-                  <div class="info">
-                      <p><strong>Повідомлення:</strong> {{ hello_content }}</p>
-                      <p><strong>Дата розгортання:</strong> {{ ansible_date_time.iso8601 }}</p>
-                      <p><strong>Хост:</strong> {{ inventory_hostname }}</p>
-                      <p><strong>ОС:</strong> {{ ansible_distribution }} {{ ansible_distribution_version }}</p>
+          
+                  <div class="hello-content">
+                      <h2>Content from hello.txt:</h2>
+                      <p><strong>{{ hello_content }}</strong></p>
                   </div>
-                  <p>Цей сервер було автоматично налаштовано за допомогою:</p>
-                  <ul>
-                      <li>GitHub Actions (CI/CD)</li>
-                      <li>Terraform (інфраструктура)</li>
-                      <li>Ansible (конфігурація)</li>
-                  </ul>
-                  <div class="info">
-                      <p><strong>Endpoints:</strong></p>
+          
+                  <div class="tech-info">
+                      <h3>Deployment Information:</h3>
+                      <p><strong>Deployed at:</strong> {{ ansible_date_time.iso8601 }}</p>
+                      <p><strong>Host:</strong> {{ inventory_hostname }}</p>
+                      <p><strong>OS:</strong> {{ ansible_distribution }} {{ ansible_distribution_version }}</p>
+          
+                      <h4>Technology Stack:</h4>
                       <ul>
-                          <li><a href="/health">Health Check</a></li>
+                          <li>GitHub Actions (CI/CD Pipeline)</li>
+                          <li>Terraform (Infrastructure as Code)</li>
+                          <li>Ansible (Configuration Management)</li>
+                          <li>AWS (Cloud Infrastructure)</li>
                       </ul>
+          
+                      <p><strong>Health Check:</strong> <a href="/health">Check Server Health</a></p>
                   </div>
               </div>
           </body>
@@ -122,6 +163,7 @@
     - name: Test nginx configuration
       command: nginx -t
       register: nginx_test
+      changed_when: false
 
     - name: Display nginx test result
       debug:
