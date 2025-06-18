@@ -26,6 +26,18 @@ jobs:
         with:
           terraform_version: 1.6.6
 
+      - name: Download bucket name artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bucket-name
+
+      - name: Read bucket name
+        id: read_bucket
+        run: |
+          BUCKET_NAME=$(cat bucket-name.txt)
+          echo "🪣 Bucket Name: $BUCKET_NAME"
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+
       - name: Get Terraform outputs from state
         id: tf_outputs
         working-directory: terraform
@@ -33,7 +45,7 @@ jobs:
           cat > backend.tf << EOF
           terraform {
             backend "s3" {
-              bucket         = "${{ needs.setup-backend.outputs.bucket-name }}"
+              bucket         = "${{ steps.read_bucket.outputs.bucket_name }}"
               key            = "terraform/terraform.tfstate"
               region         = "us-east-1"
               dynamodb_table = "terraform-state-lock"
@@ -49,17 +61,6 @@ jobs:
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/ec2_key.pem
           chmod 600 ansible/ec2_key.pem
-
-      - name: Download bucket name artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bucket-name
-
-      - name: Read bucket name
-        id: read_bucket
-        run: |
-          BUCKET_NAME=$(cat bucket-name.txt)
-          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
       - name: Create Ansible inventory
         run: |
