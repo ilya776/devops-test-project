@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'ansible/hello.txt'   # Лише при зміні цього файлу
+      - 'ansible/hello.txt'
   workflow_dispatch:
 
 jobs:
@@ -19,9 +19,9 @@ jobs:
       - name: Setup AWS CLI
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: us-east-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3.1.2
@@ -34,7 +34,7 @@ jobs:
           cat > backend.tf << EOF
           terraform {
             backend "s3" {
-              bucket         = "your-existing-bucket-name"  # <-- Встав сюди свій bucket!
+              bucket         = "${{ needs.setup-backend.outputs.bucket-name }}"
               key            = "terraform/terraform.tfstate"
               region         = "us-east-1"
               dynamodb_table = "terraform-state-lock"
