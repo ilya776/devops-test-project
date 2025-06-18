@@ -1,19 +1,19 @@
-# .github/workflows/hello-update.yml
-name: Update Hello.txt
+name: Update app via Ansible (hello.txt changes only)
 
 on:
   push:
-    paths:
-      - 'ansible/hello.txt'
     branches:
       - main
+    paths:
+      - 'ansible/hello.txt'   # Лише при зміні цього файлу
+  workflow_dispatch:
 
 jobs:
-  ansible:
+  ansible-only:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup AWS CLI
@@ -28,12 +28,13 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      - name: Generate backend config
+      - name: Initialize Terraform backend to get outputs
+        working-directory: terraform
         run: |
-          cat > terraform/backend.tf << EOF
+          cat > backend.tf << EOF
           terraform {
             backend "s3" {
-              bucket         = "your-existing-bucket"
+              bucket         = "your-existing-bucket-name"  # <-- Встав сюди свій bucket!
               key            = "terraform/terraform.tfstate"
               region         = "us-east-1"
               dynamodb_table = "terraform-state-lock"
@@ -41,17 +42,15 @@ jobs:
             }
           }
           EOF
+          terraform init
 
-      - name: Terraform init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Extract public IP
+      - name: Get Terraform outputs (IP)
         id: tf_outputs
         working-directory: terraform
-        run: echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+        run: |
+          echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
-      - name: Save SSH key
+      - name: Save SSH private key
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/ec2_key.pem
           chmod 600 ansible/ec2_key.pem
@@ -64,5 +63,22 @@ jobs:
       - name: Install Ansible
         run: sudo apt-get update && sudo apt-get install -y ansible
 
-      - name: Run Ansible playbook
+      - name: Wait for EC2 to be ready
+        run: |
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -i ansible/ec2_key.pem ubuntu@${{ steps.tf_outputs.outputs.public_ip }} echo "ready"; then
+              echo "EC2 instance is ready"
+              break
+            fi
+            echo "Waiting for EC2 instance... attempt $i"
+            sleep 10
+          done
+
+      - name: Run Ansible Playbook
         run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+
+      - name: Display deployment info
+        run: |
+          echo "🚀 Ansible update completed!"
+          echo "📍 EC2 Public IP: ${{ steps.tf_outputs.outputs.public_ip }}"
+          echo "🌐 Website: http://${{ steps.tf_outputs.outputs.public_ip }}"
