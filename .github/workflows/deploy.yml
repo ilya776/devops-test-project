@@ -66,6 +66,17 @@ jobs:
           
           echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
+      - name: Save bucket name to file
+        run: echo "${{ steps.backend.outputs.bucket-name }}" > .s3bucket.txt
+
+      - name: Commit .s3bucket.txt
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .s3bucket.txt
+          git commit -m "Save bucket name"
+          git push
+
       - name: Create DynamoDB table for state locking
         run: |
           TABLE_NAME="terraform-state-lock"

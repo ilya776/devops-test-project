@@ -50,6 +50,12 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/ec2_key.pem
           chmod 600 ansible/ec2_key.pem
 
+      - name: Read bucket name from file
+        id: bucket
+        run: |
+          BUCKET_NAME=$(cat .s3bucket.txt)
+          echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+
       - name: Create Ansible inventory
         run: |
           echo "[webserver]" > ansible/inventory.ini
