@@ -24,69 +24,97 @@ This project demonstrates a complete DevOps pipeline that:
 ## Architecture 🏗️
 
 ### Overall Project Architecture
-
-```mermaid
-    GH[GitHub Repository] --> |Trigger| GHA[GitHub Actions]
-    GHA --> |Deploy| TF[Terraform]
-    GHA --> |Configure| AN[Ansible]
-    TF --> |Create| AWS
-    AN --> |Configure| EC2[EC2 Instance]
-    
-    subgraph AWS[AWS Cloud]
-        S3[S3 Bucket] --> |State Storage| TF
-        DDB[DynamoDB] --> |State Locking| TF
-        ALB[Load Balancer] --> EC2
-        VPC[VPC] --> |Contains| EC2
-        EC2 --> |Serves| WEB[Web Application]
-    end
+```
+                                   +----------------+
+                                   |     GitHub     |
+                                   |   Repository   |
+                                   +-------+--------+
+                                           |
+                                           | Trigger
+                                           v
+                                   +----------------+
+                                   |    GitHub      |
+                                   |    Actions     |
+                                   +--------+-------+
+                                           |
+                         +-----------------)-(------------------+
+                         |                 |                   |
+                         v                 v                   v
+                  +-----------+    +-----------+        +-----------+
+                  | Terraform |    |  Ansible  |        |    AWS    |
+                  +-----+-----+    +-----+-----+        |  Services |
+                        |                |              +-----+-----+
+                        |                |                    |
+                        |                +---------------+    |
+                        |                                |    |
+                        v                                v    v
+                   +--------+                        +----------------+
+                   |   S3   |                        |      EC2      |
+                   +--------+                        +----------------+
 ```
 
 ### Infrastructure Deployment Flow
-
-```mermaid
-    participant GH as GitHub
-    participant GA as GitHub Actions
-    participant TF as Terraform
-    participant AWS as AWS Services
-    participant AN as Ansible
-
-    GH->>GA: Push to main
-    GA->>TF: Initialize
-    TF->>AWS: Check S3 Bucket
-    AWS-->>TF: Bucket Status
-    TF->>AWS: Create/Update Resources
-    AWS-->>TF: Resources Created
-    GA->>AN: Run Playbook
-    AN->>AWS: Configure EC2
-    AWS-->>AN: Configuration Complete
-    AN-->>GA: Deployment Success
-    GA-->>GH: Update Status
+```
+    GitHub         GitHub Actions      Terraform          AWS          Ansible
+      |                 |                 |               |               |
+      |  Push Code     |                 |               |               |
+      |--------------->|                 |               |               |
+      |                |    Initialize   |               |               |
+      |                |--------------->|               |               |
+      |                |                |    Create     |               |
+      |                |                |-------------->|               |
+      |                |                |               |  Configure    |
+      |                |                |               |<--------------|
+      |                |                |               |               |
+      |   Status       |                |               |               |
+      |<---------------|                |               |               |
+      |                |                |               |               |
 ```
 
-### Hello Update Workflow
+### Hello Update Flow
+```
+    GitHub         Workflow           S3          Terraform        EC2
+      |               |               |               |             |
+      |  Push         |               |               |             |
+      |-------------->|               |               |             |
+      |               |  List Buckets |               |             |
+      |               |-------------->|               |             |
+      |               |    Response   |               |             |
+      |               |<--------------|               |             |
+      |               |               |    Init       |             |
+      |               |---------------------->|       |             |
+      |               |               |               |   Update    |
+      |               |               |               |------------>|
+      |    Status     |               |               |             |
+      |<--------------|               |               |             |
+      |               |               |               |             |
+```
 
-```mermaid
-    participant GH as GitHub
-    participant WF as Hello-Update Workflow
-    participant S3 as AWS S3
-    participant TF as Terraform
-    participant AN as Ansible
-    participant EC2 as EC2 Instance
-
-    GH->>WF: Push to hello.txt
-    WF->>S3: List Buckets
-    S3-->>WF: Bucket Names
-    WF->>S3: Filter terraform-state-*
-    S3-->>WF: Target Bucket
-    WF->>TF: Init with Bucket
-    TF->>S3: Get State
-    S3-->>TF: Current State
-    TF->>WF: Instance IP
-    WF->>AN: Update Content
-    AN->>EC2: Deploy New Content
-    EC2-->>AN: Update Complete
-    AN-->>WF: Success
-    WF-->>GH: Update Status
+### Bucket Discovery Process
+```
+    +------------------+
+    |    Start Flow    |
+    +--------+---------+
+             |
+     +-------v--------+
+     | Check Manual   |
+     |    Input       |
+     +-------+--------+
+             |
+    +--------v--------+     +-----------------+
+    |  List Buckets   |     |   Use Given     |
+    |                 |     |    Name         |
+    +--------+--------+     +-----------------+
+             |                       ^
+    +--------v--------+             |
+    |    Filter      |             |
+    | terraform-state|             |
+    +--------+--------+             |
+             |                      |
+    +--------v--------+            |
+    |   Get First    |------------->
+    |     Match      |
+    +----------------+
 ```
 
 ## Project Structure 📁
@@ -139,17 +167,37 @@ devops-test-project/
 ### Hello Update Workflow
 The hello-update workflow uses a sophisticated bucket discovery mechanism:
 
-```mermaid
-    A[Start] --> B{Check Manual Input}
-    B -->|Yes| C[Use Provided Name]
-    B -->|No| D[List All Buckets]
-    D --> E[Filter terraform-state-*]
-    E --> F[Get First Match]
-    F --> G{Bucket Exists?}
-    G -->|Yes| H[Use for Backend]
-    G -->|No| I[Fail Workflow]
-    C --> H
-    H --> J[Continue Deployment]
+```
+    +---------------+
+    |     Start     |
+    +-------+-------+
+            |
+    +-------v-------+         +-----------------+
+    |  Check Input  |-------->| Use Given Name  |
+    +-------+-------+   Yes   +---------+-------+
+            |                           |
+            | No                        |
+    +-------v-------+                   |
+    | List Buckets  |                   |
+    +-------+-------+                   |
+            |                           |
+    +-------v--------+                  |
+    |     Filter     |                  |
+    |terraform-state-|                  |
+    +-------+--------+                  |
+            |                           |
+    +-------v-------+                   |
+    | First Match   |                   |
+    +-------+-------+                   |
+            |                           |
+    +-------v-------+                   |
+    |  Use Backend  |<------------------+
+    +-------+-------+
+            |
+    +-------v-------+
+    |   Continue    |
+    | Deployment    |
+    +---------------+
 ```
 
 ## Security 🔐
