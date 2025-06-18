@@ -30,6 +30,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: bucket-name
+          path: .
 
       - name: Read bucket name
         id: read_bucket
@@ -38,11 +39,9 @@ jobs:
           echo "🪣 Bucket Name: $BUCKET_NAME"
           echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
-      - name: Get Terraform outputs from state
-        id: tf_outputs
-        working-directory: terraform
+      - name: Create Terraform backend config
         run: |
-          cat > backend.tf << EOF
+          cat > terraform/backend.tf <<EOF
           terraform {
             backend "s3" {
               bucket         = "${{ steps.read_bucket.outputs.bucket_name }}"
@@ -54,8 +53,14 @@ jobs:
           }
           EOF
 
-          terraform init
-          echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Get Terraform outputs
+        id: tf_outputs
+        working-directory: terraform
+        run: echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
       - name: Save SSH private key
         run: |
