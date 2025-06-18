@@ -1,12 +1,10 @@
-name: Update app via Ansible (hello.txt changes only)
+name: Update Hello Content
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'ansible/hello.txt'
-  workflow_dispatch:
 
 jobs:
   ansible-only:
@@ -19,16 +17,17 @@ jobs:
       - name: Setup AWS CLI
         uses: aws-actions/configure-aws-credentials@v4
         with:
-            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            aws-region: us-east-1
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3.1.2
         with:
           terraform_version: 1.6.6
 
-      - name: Initialize Terraform backend to get outputs
+      - name: Get Terraform outputs from state
+        id: tf_outputs
         working-directory: terraform
         run: |
           cat > backend.tf << EOF
@@ -42,12 +41,8 @@ jobs:
             }
           }
           EOF
-          terraform init
 
-      - name: Get Terraform outputs (IP)
-        id: tf_outputs
-        working-directory: terraform
-        run: |
+          terraform init
           echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
       - name: Save SSH private key
@@ -76,9 +71,3 @@ jobs:
 
       - name: Run Ansible Playbook
         run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
-
-      - name: Display deployment info
-        run: |
-          echo "🚀 Ansible update completed!"
-          echo "📍 EC2 Public IP: ${{ steps.tf_outputs.outputs.public_ip }}"
-          echo "🌐 Website: http://${{ steps.tf_outputs.outputs.public_ip }}"

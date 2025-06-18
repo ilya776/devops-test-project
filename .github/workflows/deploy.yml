@@ -1,10 +1,8 @@
-name: Deploy infrastructure and app
+name: Deploy Infrastructure
 
 on:
   push:
-    branches:
-      - main
-    # Запускаємо, якщо змінили щось окрім hello.txt
+    branches: [main]
     paths-ignore:
       - 'ansible/hello.txt'
   workflow_dispatch:
@@ -46,24 +44,33 @@ jobs:
         run: |
           BUCKET_NAME="terraform-state-$(date +%s)-${{ github.repository_owner }}"
           BUCKET_NAME=$(echo $BUCKET_NAME | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-
+          
+          # Перевіряємо чи існує bucket
           if aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; then
             echo "Bucket $BUCKET_NAME already exists"
           else
             echo "Creating S3 bucket: $BUCKET_NAME"
             aws s3api create-bucket --bucket $BUCKET_NAME --region us-east-1
+          
+            # Включаємо версіонування
             aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
+          
+            # Блокуємо публічний доступ
             aws s3api put-public-access-block --bucket $BUCKET_NAME --public-access-block-configuration \
               "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+          
+            # Додаємо encryption
             aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration \
               '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
           fi
-
+          
           echo "bucket-name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
       - name: Create DynamoDB table for state locking
         run: |
           TABLE_NAME="terraform-state-lock"
+          
+          # Перевіряємо чи існує таблиця
           if aws dynamodb describe-table --table-name $TABLE_NAME 2>/dev/null; then
             echo "DynamoDB table $TABLE_NAME already exists"
           else
@@ -73,6 +80,8 @@ jobs:
               --attribute-definitions AttributeName=LockID,AttributeType=S \
               --key-schema AttributeName=LockID,KeyType=HASH \
               --provisioned-throughput ReadCapacityUnits=1,WriteCapacityUnits=1
+          
+            # Чекаємо поки таблиця стане активною
             aws dynamodb wait table-exists --table-name $TABLE_NAME
           fi
 
@@ -154,6 +163,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.6.6
+
+      - name: Get Terraform outputs
+        id: tf_outputs
+        working-directory: terraform
+        run: |
+          cat > backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket         = "${{ needs.setup-backend.outputs.bucket-name }}"
+              key            = "terraform/terraform.tfstate"
+              region         = "us-east-1"
+              dynamodb_table = "terraform-state-lock"
+              encrypt        = true
+            }
+          }
+          EOF
+          
+          terraform init
+          echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+
       - name: Save SSH private key
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/ec2_key.pem
@@ -162,7 +195,7 @@ jobs:
       - name: Create Ansible inventory
         run: |
           echo "[webserver]" > ansible/inventory.ini
-          echo "${{ needs.terraform.outputs.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=ansible/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory.ini
+          echo "${{ steps.tf_outputs.outputs.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=ansible/ec2_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/inventory.ini
 
       - name: Install Ansible
         run: sudo apt-get update && sudo apt-get install -y ansible
@@ -170,7 +203,7 @@ jobs:
       - name: Wait for EC2 to be ready
         run: |
           for i in {1..30}; do
-            if ssh -o StrictHostKeyChecking=no -i ansible/ec2_key.pem ubuntu@${{ needs.terraform.outputs.public_ip }} echo "ready"; then
+            if ssh -o StrictHostKeyChecking=no -i ansible/ec2_key.pem ubuntu@${{ steps.tf_outputs.outputs.public_ip }} echo "ready"; then
               echo "EC2 instance is ready"
               break
             fi
@@ -184,6 +217,6 @@ jobs:
       - name: Display deployment info
         run: |
           echo "🚀 Deployment completed successfully!"
-          echo "📍 EC2 Public IP: ${{ needs.terraform.outputs.public_ip }}"
-          echo "🌐 Website: http://${{ needs.terraform.outputs.public_ip }}"
-          echo "💾 Terraform state stored in S3 bucket: ${{ needs.setup-backend.outputs.bucket-name }}"
+          echo "📍 EC2 Public IP: ${{ steps.tf_outputs.outputs.public_ip }}"
+          echo "🌐 Website: http://${{ steps.tf_outputs.outputs.public_ip }}"
+          echo "💾 Terraform state stored in S3 bucket: ${{ needs.setup-backend.outputs.bucket-name }}" це мій deploy.yml
